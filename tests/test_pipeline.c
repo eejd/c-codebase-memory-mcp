@@ -6778,7 +6778,7 @@ static bool pipeline_reports_excluded_dir(cbm_pipeline_t *pipeline, const char *
 typedef struct {
     int rc;
     cbm_incremental_route_t route;
-    bool tools_excluded;
+    bool docs_excluded;
     artifact_publish_observer_t publish;
 } observed_fast_run_t;
 
@@ -6790,7 +6790,7 @@ static observed_fast_run_t run_observed_fast_pipeline(const char *repo_path, con
     }
     result.rc = run_observing_artifact_publish(pipeline, &result.publish);
     result.route = cbm_pipeline_incremental_test_last_route();
-    result.tools_excluded = pipeline_reports_excluded_dir(pipeline, "tools");
+    result.docs_excluded = pipeline_reports_excluded_dir(pipeline, "docs");
     cbm_pipeline_free(pipeline);
     return result;
 }
@@ -19327,9 +19327,9 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
     snprintf(retry_import_path, sizeof(retry_import_path), "%s/retry.db", artifact_tmpdir);
     snprintf(deleted_import_path, sizeof(deleted_import_path), "%s/deleted.db", artifact_tmpdir);
     ASSERT_EQ(th_write_file(TH_PATH(tmpdir, "main.go"), "package main\n\nfunc main() {}\n"), 0);
-    ASSERT_TRUE(cbm_mkdir_p(TH_PATH(tmpdir, "tools"), 0755));
-    ASSERT_EQ(th_write_file(TH_PATH(tmpdir, "tools/util.go"),
-                            "package tools\n\nfunc StoredBefore() string { return \"old\" }\n"),
+    ASSERT_TRUE(cbm_mkdir_p(TH_PATH(tmpdir, "docs"), 0755));
+    ASSERT_EQ(th_write_file(TH_PATH(tmpdir, "docs/util.go"),
+                            "package docs\n\nfunc StoredBefore() string { return \"old\" }\n"),
               0);
 
     cbm_pipeline_t *pipeline = cbm_pipeline_new(tmpdir, dbpath, CBM_MODE_FULL);
@@ -19341,8 +19341,8 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
     cbm_pipeline_free(pipeline);
     ASSERT_TRUE(cbm_artifact_exists(tmpdir));
 
-    ASSERT_EQ(th_write_file(TH_PATH(tmpdir, "tools/util.go"),
-                            "package tools\n\nfunc StoredAfter() string { return \"new\" }\n"),
+    ASSERT_EQ(th_write_file(TH_PATH(tmpdir, "docs/util.go"),
+                            "package docs\n\nfunc StoredAfter() string { return \"new\" }\n"),
               0);
 
     cbm_pipeline_incremental_test_reset_faults();
@@ -19368,7 +19368,7 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
     cbm_pipeline_incremental_test_reset_faults();
     observed_fast_run_t noop = run_observed_fast_pipeline(tmpdir, dbpath);
 
-    ASSERT_EQ(cbm_unlink(TH_PATH(tmpdir, "tools/util.go")), 0);
+    ASSERT_EQ(cbm_unlink(TH_PATH(tmpdir, "docs/util.go")), 0);
     cbm_pipeline_incremental_test_reset_faults();
     observed_fast_run_t deleted = run_observed_fast_pipeline(tmpdir, dbpath);
     int deleted_live_before;
@@ -19380,7 +19380,7 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
     cbm_store_t *store = cbm_store_open_path(dbpath);
     ASSERT_NOT_NULL(store);
     cbm_file_hash_t deleted_hash = {0};
-    int deleted_hash_rc = cbm_store_get_file_hash(store, project, "tools/util.go", &deleted_hash);
+    int deleted_hash_rc = cbm_store_get_file_hash(store, project, "docs/util.go", &deleted_hash);
     cbm_store_clear_file_hash(&deleted_hash);
     cbm_store_close(store);
     imported_generation_t deleted_artifact =
@@ -19393,7 +19393,7 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
 
     ASSERT_EQ(cancelled.rc, CBM_PIPELINE_ABORT_PRESERVE_DB);
     ASSERT_EQ(cancelled.route, CBM_INCREMENTAL_ROUTE_FORCED_FULL);
-    ASSERT_TRUE(cancelled.tools_excluded);
+    ASSERT_TRUE(cancelled.docs_excluded);
     ASSERT_EQ(cancelled_live_before, 1);
     ASSERT_EQ(cancelled_live_after, 0);
     ASSERT_EQ(cancelled.publish.rename_calls, 0);
@@ -19404,7 +19404,7 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
 
     ASSERT_EQ(retry.rc, 0);
     ASSERT_EQ(retry.route, CBM_INCREMENTAL_ROUTE_FORCED_FULL);
-    ASSERT_TRUE(retry.tools_excluded);
+    ASSERT_TRUE(retry.docs_excluded);
     ASSERT_TRUE(retry_full_mode);
     ASSERT_EQ(retry_live_before, 0);
     ASSERT_EQ(retry_live_after, 1);
@@ -19417,7 +19417,7 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
 
     ASSERT_EQ(noop.rc, 0);
     ASSERT_EQ(noop.route, CBM_INCREMENTAL_ROUTE_NOOP);
-    ASSERT_TRUE(noop.tools_excluded);
+    ASSERT_TRUE(noop.docs_excluded);
     /* Proven on the live generation: nothing is published, the artifact is
      * still refreshed from the live database. */
     ASSERT_EQ(noop.publish.rename_calls, 0);
@@ -19425,7 +19425,7 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
 
     ASSERT_EQ(deleted.rc, 0);
     ASSERT_EQ(deleted.route, CBM_INCREMENTAL_ROUTE_FORCED_FULL);
-    ASSERT_TRUE(deleted.tools_excluded);
+    ASSERT_TRUE(deleted.docs_excluded);
     ASSERT_EQ(deleted.publish.rename_calls, 1);
     ASSERT_EQ(deleted.publish.exports_before_publish, 0);
     ASSERT_EQ(deleted.publish.export_count, 1);
@@ -19439,10 +19439,10 @@ TEST(incremental_downgrade_preserves_scope_and_artifact_across_change_noop_delet
     PASS();
 }
 
-TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
+TEST(incremental_fast_preserves_mode_skipped_docs_dir) {
     /* Regression: 2026-04-13. A fast-mode reindex after a full-mode index
      * was silently destroying every file under FAST_SKIP_DIRS directories
-     * (`tools`, `scripts`, `bin`, `build`, `docs`, ...) by classifying them
+     * (`bin`, `build`, `docs`, ...) by classifying them
      * as deleted in find_deleted_files even though they still existed on
      * disk. The Skyline graph lost packages/mcp/src/tools/ (18 files / ~500
      * nodes) mid-session when a concurrent /develop run obediently called
@@ -19469,15 +19469,15 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
     fprintf(f, "package main\n\nfunc main() {\n}\n");
     fclose(f);
 
-    /* tools/util.go — production code under a FAST_SKIP_DIRS directory.
+    /* docs/util.go — source-shaped content under a FAST_SKIP_DIRS directory.
      * Full mode indexes it; fast mode skips it via the discover.c heuristic. */
-    char tools_dir[512];
-    snprintf(tools_dir, sizeof(tools_dir), "%s/tools", tmpdir);
-    cbm_mkdir_p(tools_dir, 0755);
-    snprintf(path, sizeof(path), "%s/tools/util.go", tmpdir);
+    char docs_dir[512];
+    snprintf(docs_dir, sizeof(docs_dir), "%s/docs", tmpdir);
+    cbm_mkdir_p(docs_dir, 0755);
+    snprintf(path, sizeof(path), "%s/docs/util.go", tmpdir);
     f = fopen(path, "w");
     ASSERT_NOT_NULL(f);
-    fprintf(f, "package tools\n\nfunc Util() string {\n\treturn \"u\"\n}\n");
+    fprintf(f, "package docs\n\nfunc Util() string {\n\treturn \"u\"\n}\n");
     fclose(f);
 
     /* Step 1: full-mode index — both files should be present */
@@ -19489,16 +19489,16 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
 
     cbm_store_t *s = cbm_store_open_path(dbpath);
     ASSERT_NOT_NULL(s);
-    cbm_node_t *tools_nodes_before = NULL;
-    int tools_count_before = 0;
-    cbm_store_find_nodes_by_file(s, project, "tools/util.go", &tools_nodes_before,
-                                 &tools_count_before);
-    ASSERT_GT(tools_count_before, 0); /* full mode must see tools/util.go */
-    cbm_store_free_nodes(tools_nodes_before, tools_count_before);
+    cbm_node_t *docs_nodes_before = NULL;
+    int docs_count_before = 0;
+    cbm_store_find_nodes_by_file(s, project, "docs/util.go", &docs_nodes_before,
+                                 &docs_count_before);
+    ASSERT_GT(docs_count_before, 0); /* full mode must see docs/util.go */
+    cbm_store_free_nodes(docs_nodes_before, docs_count_before);
     int total_before = cbm_store_count_nodes(s, project);
     cbm_store_close(s);
 
-    /* Step 2: fast-mode reindex — tools/util.go MUST survive (additive semantics) */
+    /* Step 2: fast-mode reindex — docs/util.go MUST survive (additive semantics) */
     p = cbm_pipeline_new(tmpdir, dbpath, CBM_MODE_FAST);
     ASSERT_NOT_NULL(p);
     ASSERT_EQ(cbm_pipeline_run(p), 0);
@@ -19506,18 +19506,18 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
 
     s = cbm_store_open_path(dbpath);
     ASSERT_NOT_NULL(s);
-    cbm_node_t *tools_nodes_after = NULL;
-    int tools_count_after = 0;
-    cbm_store_find_nodes_by_file(s, project, "tools/util.go", &tools_nodes_after,
-                                 &tools_count_after);
-    /* The critical assertion: tools/util.go nodes must still be present after
-     * a fast-mode reindex that skipped the tools/ directory. Before the fix,
+    cbm_node_t *docs_nodes_after = NULL;
+    int docs_count_after = 0;
+    cbm_store_find_nodes_by_file(s, project, "docs/util.go", &docs_nodes_after,
+                                 &docs_count_after);
+    /* The critical assertion: docs/util.go nodes must still be present after
+     * a fast-mode reindex that skipped the docs/ directory. Before the fix,
      * this was 0. */
-    ASSERT_GT(tools_count_after, 0);
-    ASSERT_EQ(tools_count_after, tools_count_before); /* same nodes, untouched */
-    cbm_store_free_nodes(tools_nodes_after, tools_count_after);
+    ASSERT_GT(docs_count_after, 0);
+    ASSERT_EQ(docs_count_after, docs_count_before); /* same nodes, untouched */
+    cbm_store_free_nodes(docs_nodes_after, docs_count_after);
 
-    /* Sanity: total node count should not have collapsed by ~the size of tools/ */
+    /* Sanity: total node count should not have collapsed by ~the size of docs/ */
     int total_after = cbm_store_count_nodes(s, project);
     ASSERT_GTE(total_after, total_before); /* additive — never less */
     cbm_store_close(s);
@@ -19525,7 +19525,7 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
     /* Step 3: mutate main.go and fast reindex — forces dump_and_persist to
      * run (instead of the noop early-return path that step 2 hit). This is
      * the real dangerous path: the gbuf gets loaded, mutated for main.go,
-     * dumped back to disk. tools/util.go must survive THAT cycle, not just
+     * dumped back to disk. docs/util.go must survive THAT cycle, not just
      * the trivial noop path. Audit finding from 2026-04-13. */
     snprintf(path, sizeof(path), "%s/main.go", tmpdir);
     f = fopen(path, "w");
@@ -19553,20 +19553,20 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
 
     s = cbm_store_open_path(dbpath);
     ASSERT_NOT_NULL(s);
-    cbm_node_t *tools_nodes_run3 = NULL;
-    int tools_count_run3 = 0;
-    cbm_store_find_nodes_by_file(s, project, "tools/util.go", &tools_nodes_run3, &tools_count_run3);
-    /* tools/util.go nodes must STILL be present after a fast reindex that
+    cbm_node_t *docs_nodes_run3 = NULL;
+    int docs_count_run3 = 0;
+    cbm_store_find_nodes_by_file(s, project, "docs/util.go", &docs_nodes_run3, &docs_count_run3);
+    /* docs/util.go nodes must STILL be present after a fast reindex that
      * actually ran the full dump_and_persist cycle (not the noop fast-path). */
-    ASSERT_EQ(tools_count_run3, tools_count_before);
-    cbm_store_free_nodes(tools_nodes_run3, tools_count_run3);
+    ASSERT_EQ(docs_count_run3, docs_count_before);
+    cbm_store_free_nodes(docs_nodes_run3, docs_count_run3);
     cbm_store_close(s);
 
-    /* Step 4: actually delete tools/util.go from disk and full-reindex.
+    /* Step 4: actually delete docs/util.go from disk and full-reindex.
      * Now it really is gone, so its nodes should be purged. This pins the
      * other half of the contract: the stat-based check correctly identifies
      * truly-deleted files as deleted. */
-    snprintf(path, sizeof(path), "%s/tools/util.go", tmpdir);
+    snprintf(path, sizeof(path), "%s/docs/util.go", tmpdir);
     unlink(path);
 
     p = cbm_pipeline_new(tmpdir, dbpath, CBM_MODE_FULL);
@@ -19576,12 +19576,12 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
 
     s = cbm_store_open_path(dbpath);
     ASSERT_NOT_NULL(s);
-    cbm_node_t *tools_nodes_deleted = NULL;
-    int tools_count_deleted = 0;
-    cbm_store_find_nodes_by_file(s, project, "tools/util.go", &tools_nodes_deleted,
-                                 &tools_count_deleted);
-    ASSERT_EQ(tools_count_deleted, 0); /* truly deleted → purged */
-    cbm_store_free_nodes(tools_nodes_deleted, tools_count_deleted);
+    cbm_node_t *docs_nodes_deleted = NULL;
+    int docs_count_deleted = 0;
+    cbm_store_find_nodes_by_file(s, project, "docs/util.go", &docs_nodes_deleted,
+                                 &docs_count_deleted);
+    ASSERT_EQ(docs_count_deleted, 0); /* truly deleted → purged */
+    cbm_store_free_nodes(docs_nodes_deleted, docs_count_deleted);
     cbm_store_close(s);
 
     free(project);
@@ -23791,7 +23791,7 @@ SUITE(pipeline) {
 #ifdef __linux__
     RUN_TEST(full_reindex_preserves_exact_long_db_path);
 #endif
-    RUN_TEST(incremental_fast_preserves_mode_skipped_tools_dir);
+    RUN_TEST(incremental_fast_preserves_mode_skipped_docs_dir);
     RUN_TEST(incremental_k8s_manifest_indexed);
     RUN_TEST(incremental_kustomize_entries_indexed);
     /* Resource management & internal helper tests */
