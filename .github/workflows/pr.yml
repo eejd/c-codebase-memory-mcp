@@ -3,7 +3,7 @@
 # job below runs only when selected (unknown paths, workflows, the harness,
 # Makefile.cbm and vendored code select everything). Builds, smoke and soak at
 # full breadth stay maintainer-driven via the dry-run workflow_dispatch. Branch
-# protection requires `dco` + `ci-ok` — a single stable summary context that
+# protection requires `ci-ok` — a single stable summary context that
 # fails unless every PR stage succeeded and every selected lane ran green.
 name: PR
 
@@ -342,7 +342,7 @@ jobs:
         run: scripts/test.sh --contracts-only
 
   ci-ok:
-    # The one required context (besides dco) — fails unless every PR stage
+    # The one required context — fails unless every PR stage
     # succeeded, so matrix renames can never silently deadlock merges, and
     # every lane the selector chose ran green: `skipped` is OK only for a lane
     # nobody selected (a selected lane that skipped is a silent gate loss).
