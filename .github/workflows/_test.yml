@@ -28,6 +28,10 @@ on:
         description: 'PR test selection (smart CI): the artifact the select-tests job uploaded; the test-unix and test-windows legs run only its tests. Empty = every test (dry run, release, and any PR the selection does not narrow)'
         type: string
         default: ''
+      macos_arm_only:
+        description: 'Run only the fork-supported macOS ARM validation surface'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -54,6 +58,7 @@ jobs:
           SHARDS: ${{ inputs.shard_suites }}
           SHARD_PROFILE: ${{ inputs.shard_profile }}
           LANES: ${{ inputs.lanes }}
+          MACOS_ARM_ONLY: ${{ inputs.macos_arm_only }}
         run: |
           # Every CORE leg is tagged with the lane (scripts/ci/select-lanes.sh)
           # it serves; the tag is what lane selection filters on below.
@@ -81,7 +86,10 @@ jobs:
           # is a real (non-optional) gate, not a tolerated emulated-flake.
           CORE_WIN='[{"os":"windows-latest","msystem":"CLANG64","pkg":"x86_64","lane":"windows"}]'
           BROAD_WIN='[{"os":"windows-2025","msystem":"CLANG64","pkg":"x86_64"},{"os":"windows-11-arm","msystem":"CLANGARM64","pkg":"aarch64"}]'
-          if [ "$BROAD" = "true" ]; then
+          if [ "$MACOS_ARM_ONLY" = "true" ]; then
+            UNIX='[{"os":"macos-14","cc":"cc","cxx":"c++","lane":"unix-macos14"}]'
+            WIN='[]'
+          elif [ "$BROAD" = "true" ]; then
             UNIX=$(jq -cn --argjson a "$CORE_UNIX" --argjson b "$BROAD_UNIX" '$a + $b')
             WIN=$(jq -cn --argjson a "$CORE_WIN" --argjson b "$BROAD_WIN" '$a + $b')
           else
@@ -94,6 +102,9 @@ jobs:
             {"os":"ubuntu-24.04-arm","cc":"clang","cxx":"clang++","lane":"tsan-arm"},
             {"os":"macos-14","cc":"cc","cxx":"c++","lane":"tsan-mac"}
           ]'
+          if [ "$MACOS_ARM_ONLY" = "true" ]; then
+            TSAN=$(jq -c 'map(select(.os == "macos-14"))' <<< "$TSAN")
+          fi
           # Lane selection. "all" (dry run, release) keeps every leg and drops
           # the tags, so those matrices -- and their job names -- stay exactly
           # as before lane selection. A PR keeps only its selected legs, and
@@ -291,7 +302,7 @@ jobs:
   # inode/flock behavior and Windows handle/link behavior are each gating,
   # without adding Node/Go provisioning to every sanitizer/container leg.
   test-package-wrappers:
-    if: ${{ inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'pkg-wrappers') }}
+    if: ${{ !inputs.macos_arm_only && (inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'pkg-wrappers')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -354,7 +365,7 @@ jobs:
   # parallel suite — catches what an older compiler-rt can miss. Same
   # canonical scripts/test.sh wave as every other leg.
   test-diag:
-    if: ${{ inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'diag') }}
+    if: ${{ !inputs.macos_arm_only && (inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'diag')) }}
     # Pinned for the same reason as the lint jobs: the pinned diagnostic
     # toolchain below installs from llvm-toolchain-noble-21.
     runs-on: ubuntu-24.04
@@ -434,7 +445,7 @@ jobs:
   # Per-cause detail lives in scripts/msan.sh, which is the single authoritative
   # list both venues now share.
   test-msan:
-    if: ${{ inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'msan') }}
+    if: ${{ !inputs.macos_arm_only && (inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'msan')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -565,6 +576,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
 
   test-windows:
+    if: ${{ !inputs.macos_arm_only }}
     needs: setup-matrix
     if: ${{ needs.setup-matrix.outputs.has_windows == 'true' }}
     strategy:
@@ -704,7 +716,7 @@ jobs:
   # contributes one 1/1 manifest whose slice must equal the full list).
   shard-completeness:
     needs: [test-unix, test-windows]
-    if: always()
+    if: ${{ always() && !inputs.macos_arm_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -735,7 +747,7 @@ jobs:
   # CLI arguments being mangled by the narrow-argv main() (#423/#20, fixed by the
   # wide-argv entrypoint that reads GetCommandLineW).
   test-windows-guards:
-    if: ${{ inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'windows-guards') }}
+    if: ${{ !inputs.macos_arm_only && (inputs.lanes == 'all' || contains(fromJSON(inputs.lanes), 'windows-guards')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
